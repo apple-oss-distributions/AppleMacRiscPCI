@@ -3,22 +3,19 @@
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
- * Copyright (c) 1999-2003 Apple Computer, Inc.  All Rights Reserved.
+ * The contents of this file constitute Original Code as defined in and
+ * are subject to the Apple Public Source License Version 1.1 (the
+ * "License").  You may not use this file except in compliance with the
+ * License.  Please obtain a copy of the License at
+ * http://www.apple.com/publicsource and read it before using this file.
  * 
- * This file contains Original Code and/or Modifications of Original Code
- * as defined in and that are subject to the Apple Public Source License
- * Version 2.0 (the 'License'). You may not use this file except in
- * compliance with the License. Please obtain a copy of the License at
- * http://www.opensource.apple.com/apsl/ and read it before using this
- * file.
- * 
- * The Original Code and all software distributed under the License are
- * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * This Original Code and all software distributed under the License are
+ * distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
  * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
- * Please see the License for the specific language governing rights and
- * limitations under the License.
+ * FITNESS FOR A PARTICULAR PURPOSE OR NON-INFRINGEMENT.  Please see the
+ * License for the specific language governing rights and limitations
+ * under the License.
  * 
  * @APPLE_LICENSE_HEADER_END@
  */
@@ -30,7 +27,29 @@
  * 05 Nov 99 sdouglas added UniNorth AGP based on UniNorthAGPDriver.c
  *					by Fernando Urbina, Kent Miller.
  *
- */
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * List of UniNorth device revisions.
+ * Last updated 15 Dec 2004.
+ *
+ *	UniN V1.0       -	0x00
+ *	UniN V1.5       -	0x10
+ *	U2              -	0x20
+ *	Intrepid V1.0   -	0xD0
+ *	Intrepid V1.1   -	0xD0
+ *	Intrepid V2.0   -	0xD2
+ *	Intrepid V2.1   -	0xD2
+ *	U3 V1.0         -	0x30
+ *	U3 V2.1         -	0x32
+ *	U3 V2.2         -	0x33
+ *	U3 V2.3         -	0xB3
+ *	U3 Heavy V1.0   -	0x34
+ *	U3 Heavy V1.1   -	0x35
+ *      U3 Heavy V2.0   -       0x37
+ *	U3 Light V1.0   -	0x38
+ *	U3 Light V1.1   -	0x39
+ *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
 #define _BIG_ENDIAN 1  // for 2370035
 
 #include <IOKit/system.h>
@@ -115,8 +134,11 @@ bool AppleMacRiscPCI::start( IOService * provider )
     {
         tmpData = OSDynamicCast(OSData, uniNRegEntry->getProperty("device-rev"));
         if (tmpData)
+		{
             uniNVersion = *(long *)tmpData->getBytesNoCopy();
 	uniNRegEntry->release();
+			//uniNVersion &= 0x3f;
+		}
     }
             
     bridge = provider;
@@ -697,8 +719,19 @@ bool AppleMacRiscAGP::configure( IOService * provider )
 
     isU3 = IODTMatchNubWithKeys(provider, "u3-agp");
     if (isU3) {
-	gartCtrl |= kGART_PERF_RD;
-	isU32     = (uniNVersion > 0x30);
+	
+        uniNVersion &= 0x3f;
+
+        gartCtrl |= kGART_PERF_RD;
+	
+        if(uniNVersion > 0x33)
+        {
+            /* B2B_GNT seems broken on U3 Twins */
+            //gartCtrl |= kGART_B2B_GNT;
+            //gartCtrl |= kGART_FAST_DDR;
+        }
+	
+        isU32     = (uniNVersion > 0x30);
     }
 
     return( super::configure( provider));
@@ -726,42 +759,44 @@ IOPCIDevice * AppleMacRiscAGP::createNub( OSDictionary * from )
     
     if( isAGP)
     {
-	UInt64	   flags;
-	OSNumber * num;
+		UInt64	   flags;
+		OSNumber * num;
 
-	num = OSDynamicCast(OSNumber, getProperty(kIOAGPBusFlagsKey));
-	if (num)
-	    flags = num->unsigned64BitValue();
-	else
-	    flags = 0;
+		num = OSDynamicCast(OSNumber, getProperty(kIOAGPBusFlagsKey));
+		
+		if (num)
+			flags = num->unsigned64BitValue();
+		else
+			flags = 0;
 
-	if (isU32)
-	    flags &= ~kIOAGPGartInvalidate;
-	else
-	    flags |= kIOAGPGartInvalidate;
-#if 1
-	if (isU3 || (uniNVersion < 0x08))
-	    flags |= kIOAGPDisablePageSpans;
-#else
-	if ((uniNVersion < 0x08) || (isU3 && (uniNVersion < 0x33)))
-	    flags |= kIOAGPDisablePageSpans;
-#endif
-	if (isU3 && (uniNVersion < 0x34))
-	    flags |= kIOAGPDisableUnaligned;
-	if (uniNVersion < 0x20)
-	    flags |= kIOAGPDisableAGPWrites;
-	if (uniNVersion == 0x30)
-	    flags |= kIOAGPDisablePCIReads | kIOAGPDisablePCIWrites;
+		if (isU32)
+			flags &= ~kIOAGPGartInvalidate;
+		else
+			flags |= kIOAGPGartInvalidate;
 
-	num = OSNumber::withNumber(flags, 64);
-	nub = new IOAGPDevice;
+		if ((uniNVersion < 0x08) || (isU3 && (uniNVersion < 0x33)))
+			flags |= kIOAGPDisablePageSpans;
+
+		if (isU3 && (uniNVersion < 0x34))
+			flags |= kIOAGPDisableUnaligned;
+	
+		if (uniNVersion < 0x20)
+			flags |= kIOAGPDisableAGPWrites;
+	
+		if (uniNVersion == 0x30)
+			flags |= kIOAGPDisablePCIReads | kIOAGPDisablePCIWrites;
+
+		num = OSNumber::withNumber(flags, 64);
+		nub = new IOAGPDevice;
+		
         if (nub)
             ((IOAGPDevice *)nub)->masterAGPRegisters = masterAGPRegisters;
-	if (num)
-	{
-	    from->setObject(kIOAGPBusFlagsKey, num);
-	    num->release();
-	}
+			
+		if (num)
+		{
+			from->setObject(kIOAGPBusFlagsKey, num);
+			num->release();
+		}
     }
     else
         nub = super::createNub( from );
@@ -799,41 +834,41 @@ IOReturn AppleMacRiscAGP::createAGPSpace( IOAGPDevice * master,
     agpCommandMask = 0xffffffff;
 //  agpCommandMask &= ~kIOAGPSideBandAddresssing;
 
-    if (isU3)
-	agpCommandMask &= ~kIOAGPFastWrite;
+//    if (isU3)
+//	agpCommandMask &= ~kIOAGPFastWrite;
 
-    {
-	// There's an nVidia NV11 ROM (revision 1017) that says that it can do fast writes,
-	// but can't, and can often lock the machine up when fast writes are enabled.
-	#define kNVIDIANV11EntryName	"NVDA,NVMac"
-	#define kNVIDIAEntryName	"NVDA,"
-	#define kNVROMRevPropertyName 	"rom-revision"
-	#define kNVBadRevision		'1017'
+//    {
+//	// There's an nVidia NV11 ROM (revision 1017) that says that it can do fast writes,
+//	// but can't, and can often lock the machine up when fast writes are enabled.
+//	#define kNVIDIANV11EntryName	"NVDA,NVMac"
+//	#define kNVIDIAEntryName	"NVDA,"
+//	#define kNVROMRevPropertyName 	"rom-revision"
+//	#define kNVBadRevision		'1017'
 
-#if NO_NVIDIA_FASTWRITE
+//#if NO_NVIDIA_FASTWRITE
 
-	if( 0 == strncmp( kNVIDIAEntryName, master->getName(), strlen(kNVIDIAEntryName)))
-        {
-	    agpCommandMask &= ~kIOAGPFastWrite;			// NV34 systems (Q26B/Q54) has issues with this
-	    if (!isU3)
-		agpCommandMask &= ~kIOAGPSideBandAddresssing;	// NV34 systems (Q26B/Q54) has issues with this
-        }
+//	if( 0 == strncmp( kNVIDIAEntryName, master->getName(), strlen(kNVIDIAEntryName)))
+//        {
+//	    agpCommandMask &= ~kIOAGPFastWrite;			// NV34 systems (Q26B/Q54) has issues with this
+//	    if (!isU3)
+//		agpCommandMask &= ~kIOAGPSideBandAddresssing;	// NV34 systems (Q26B/Q54) has issues with this
+//        }
 
-#else	/* NO_NVIDIA_FASTWRITE */
+//#else	/* NO_NVIDIA_FASTWRITE */
 
-	const UInt32    badRev = kNVBadRevision;
+//	const UInt32    badRev = kNVBadRevision;
 
-	if( (0 == strcmp( kNVIDIANV11EntryName, master->getName()))
-	 && (data = OSDynamicCast(OSData, master->getProperty(kNVROMRevPropertyName)))
-	 && (data->isEqualTo( &badRev, sizeof(badRev)))	 )
-	    agpCommandMask &= ~kIOAGPFastWrite;
+//	if( (0 == strcmp( kNVIDIANV11EntryName, master->getName()))
+//	 && (data = OSDynamicCast(OSData, master->getProperty(kNVROMRevPropertyName)))
+//	 && (data->isEqualTo( &badRev, sizeof(badRev)))	 )
+//	    agpCommandMask &= ~kIOAGPFastWrite;
 
-#endif	/* !NO_NVIDIA_FASTWRITE */
-    }
+//#endif	/* !NO_NVIDIA_FASTWRITE */
+//    }
 
-#if NO_FASTWRITE
-    agpCommandMask &= ~kIOAGPFastWrite;
-#endif	/* !NO_FASTWRITE */
+//#if NO_FASTWRITE
+//    agpCommandMask &= ~kIOAGPFastWrite;
+//#endif	/* !NO_FASTWRITE */
 
     if ((data = OSDynamicCast(OSData, getProvider()->getProperty("AAPL,agp-clear"))))
 	agpCommandMask &= ~*((UInt32 *)data->getBytesNoCopy());
@@ -936,9 +971,10 @@ IOReturn AppleMacRiscAGP::destroyAGPSpace( IOAGPDevice * master )
 
     setAGPEnable( master, false, 0 );
 
-    if( gartArray) {
-	IOFreeContiguous( (void *) gartArray, gartLength);
-	gartArray = 0;
+    if( gartHandle) {
+	IOMapper::FreeARTTable(gartHandle, gartLength);
+	gartHandle = 0;
+	gartArray  = 0;
     }
     if( agpRange) {
 	agpRange->release();
@@ -1142,20 +1178,24 @@ IOReturn AppleMacRiscAGP::setAGPEnable( IOAGPDevice * _master,
                                      masterAGPRegisters + kIOPCIConfigAGPStatusOffset );
 
 	command = kIOAGPSideBandAddresssing
-                | kIOAGPFastWrite
-                | kIOAGP3Mode
-		| kIOAGP4xDataRate | kIOAGP2xDataRate | kIOAGP1xDataRate;
+			| kIOAGP3Mode
+			| kIOAGP4xDataRate | kIOAGP2xDataRate | kIOAGP1xDataRate;
+
+	// Enable fast-write support for U3 Heavy/Light.
+	if( uniNVersion == 0x34 || uniNVersion == 0x35 || uniNVersion == 0x37 ||  uniNVersion == 0x38 || uniNVersion == 0x39 )
+		command |= kIOAGPFastWrite;
+			
 	command &= targetStatus;
 	command &= masterStatus;
 
-        if (uniNVersion == 0x21)
-        {
-            command &= ~(kIOAGP4xDataRate);
-            IOLog("AGP 4x mode disabled on this machine\n");
-        }
+	if (uniNVersion == 0x21)
+	{
+		command &= ~(kIOAGP4xDataRate);
+		IOLog("AGP 4x mode disabled on this machine\n");
+	}
 
-        command &= agpCommandMask;
-        command |= agpCommandSet;
+	command &= agpCommandMask;
+	command |= agpCommandSet;
 
 	if (isU32)
 	    _master->setProperty("AAPL,agp3-mode", (command & kIOAGP3Mode) ? kOSBooleanTrue : kOSBooleanFalse);
@@ -1164,7 +1204,7 @@ IOReturn AppleMacRiscAGP::setAGPEnable( IOAGPDevice * _master,
 	{
 	    command &= ~kIOAGP4xDataRate;
 	    if( command & kIOAGP8xDataRateMode3)
-		command &= ~(kIOAGP4xDataRateMode3 | kIOAGPFastWrite);
+		command &= ~kIOAGP4xDataRateMode3;
 	    else if( 0 == (command & kIOAGP4xDataRateMode3))
 		return( kIOReturnUnsupported );
 	}
@@ -1187,6 +1227,11 @@ IOReturn AppleMacRiscAGP::setAGPEnable( IOAGPDevice * _master,
 
 	if( targetStatus > masterStatus)
 	    targetStatus = masterStatus;
+        
+        if((uniNVersion >= 0x30) && (uniNVersion <= 0x33))
+            // We neeed to set the REQ_DEPTH to 7 for U3 versions V1.0, V2.1, V2.2 and V2.3.
+            command |= 0x07000000;
+        else
 	command |= (targetStatus & kIOAGPRequestQueueMask);
 
         _master->setProperty(kIOAGPCommandValueKey, &command, sizeof(command));
